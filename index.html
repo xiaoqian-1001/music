@@ -2,92 +2,300 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>我的私人AI</title>
-    <style>
-        *{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif}
-        body{background:#111827;color:#fff;padding:20px;max-width:900px;margin:0 auto}
-        #chat{height:75vh;overflow-y:auto;margin-bottom:20px;padding:10px}
-        .message{margin:10px 0;padding:14px 18px;border-radius:14px;max-width:85%;line-height:1.6}
-        .user{background:#2563eb;margin-left:auto;color:white}
-        .ai{background:#1f2937}
-        .input-area{display:flex;gap:10px;margin-top:10px}
-        input{flex:1;padding:16px;border-radius:12px;border:none;background:#1f2937;color:white;outline:none;font-size:16px}
-        button{padding:0 20px;background:#2563eb;color:white;border:none;border-radius:12px;font-size:16px;cursor:pointer}
-    </style>
-</head>
-<body>
-    <div id="chat"></div>
-    <div class="input-area">
-        <input type="text" id="input" placeholder="输入消息..." autocomplete="off">
-        <button onclick="send()">发送</button>
-    </div>
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>我的私人AI助手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@4.2.0/fonts/remixicon.css" rel="stylesheet">
     <script>
-        const API_URL = "https://openai.good.hidns.vip/v1/chat/completions";
-        const API_KEY = "free-api";
-
-        async function send(){
-            const input = document.getElementById('input');
-            const text = input.value.trim();
-            if(!text) return;
-            input.value = '';
-
-            const chat = document.getElementById('chat');
-            chat.innerHTML += `<div class='message user'>${text}</div>`;
-            chat.scrollTop = chat.scrollHeight;
-
-            const aiMsg = document.createElement('div');
-            aiMsg.className = 'message ai';
-            aiMsg.innerText = '思考中...';
-            chat.appendChild(aiMsg);
-            chat.scrollTop = chat.scrollHeight;
-
-            try{
-                const res = await fetch(API_URL,{
-                    method:'POST',
-                    headers:{
-                        'Content-Type':'application/json',
-                        'Authorization':'Bearer '+API_KEY
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        sidebar: '#202123',
+                        mainBg: '#343541',
+                        aiMsgBg: '#40414F',
+                        userMsgBg: '#165DFF',
+                        primary: '#165DFF'
                     },
-                    body:JSON.stringify({
-                        model:"gpt-4o-mini",
-                        messages:[{role:"user",content:text}],
-                        stream:true
-                    })
-                });
-
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let result = '';
-                aiMsg.innerText = '';
-
-                while(true){
-                    const {done,value} = await reader.read();
-                    if(done) break;
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n').filter(i=>i.trim());
-                    for(let line of lines){
-                        if(!line.startsWith('data: ')) continue;
-                        const jsonStr = line.slice(6);
-                        if(jsonStr === '[DONE]') continue;
-                        try{
-                            const data = JSON.parse(jsonStr);
-                            const content = data.choices[0]?.delta?.content || '';
-                            result += content;
-                            aiMsg.innerText = result;
-                            chat.scrollTop = chat.scrollHeight;
-                        }catch(e){}
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif']
                     }
                 }
-            }catch(err){
-                aiMsg.innerText = "出错了："+err.message;
+            }
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+        /* 加载打字动画 */
+        .loading-animate::after {
+            content: "";
+            animation: dot 1.2s infinite;
+        }
+        @keyframes dot {
+            0% { content: ""; }
+            33% { content: "."; }
+            66% { content: ".."; }
+            100% { content: "..."; }
+        }
+    </style>
+</head>
+<body class="overflow-hidden select-none bg-mainBg">
+<div class="flex h-screen w-full">
+    <!-- 侧边栏 -->
+    <aside id="sidebar" class="w-64 bg-sidebar text-white flex flex-col transition-all duration-300 fixed md:relative z-20 h-full md:translate-x-0 translate-x-full">
+        <div class="p-3 border-b border-gray-700">
+            <button onclick="clearAllChat()" class="w-full py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-sm flex items-center justify-center gap-2 transition">
+                <i class="ri-add-line"></i> 新建对话
+            </button>
+        </div>
+
+        <!-- 模型下拉切换（适配接口原生可用模型） -->
+        <div class="p-3 border-b border-gray-700">
+            <label class="text-xs text-gray-400 block mb-1">选择对话模型</label>
+            <select id="modelSelect" class="w-full bg-gray-700 rounded px-2 py-2 text-sm outline-none border-none">
+                <option value="gpt-4o-mini">GPT-4o Mini（全能首选）</option>
+                <option value="gpt-3.5-turbo">GPT-3.5 Turbo（极速轻量）</option>
+                <option value="deepseek-chat">DeepSeek 深度问答</option>
+                <option value="glm-4-flash">智谱GLM 长文本理解</option>
+                <option value="qwen2.5">通义千问 全能模型</option>
+                <option value="image">🎨 AI文生图绘画</option>
+            </select>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-3 text-xs text-gray-400">
+            <p>✅ 完整上下文记忆对话</p>
+            <p>✅ 电脑+手机全设备适配</p>
+            <p>✅ AI绘画图片生成</p>
+            <p>✅ 原生流式打字回复</p>
+            <p class="mt-3 text-amber-400">⚠️ 仅限个人自用，禁止公开分享</p>
+        </div>
+    </aside>
+
+    <!-- 主聊天界面 -->
+    <div class="flex-1 flex flex-col text-white h-screen">
+        <!-- 顶部导航栏 -->
+        <header class="h-14 flex items-center justify-between px-4 border-b border-gray-700">
+            <div class="flex items-center gap-3">
+                <button onclick="toggleSidebar()" class="md:hidden text-xl">
+                    <i class="ri-menu-line"></i>
+                </button>
+                <h1 class="font-medium text-base">私人AI助手</h1>
+            </div>
+            <span id="status" class="text-xs text-gray-400">✅ 服务就绪</span>
+        </header>
+
+        <!-- 聊天消息容器 -->
+        <main id="chatBox" class="flex-1 overflow-y-auto px-4 md:px-[15%] py-6 space-y-6"></main>
+
+        <!-- 底部输入框区域 -->
+        <footer class="p-4 md:px-[15%]">
+            <div class="relative">
+                <textarea 
+                    id="inputText" 
+                    rows="1" 
+                    placeholder="输入你的问题，文字对话/绘画描述均可..."
+                    class="w-full rounded-xl bg-aiMsgBg outline-none p-4 pr-14 resize-none text-sm max-h-40 border-none transition focus:ring-1 focus:ring-primary"
+                ></textarea>
+                <button onclick="sendMessage()" class="absolute right-3 bottom-3 bg-primary rounded-lg w-9 h-9 flex items-center justify-center hover:opacity-90 transition">
+                    <i class="ri-send-plane-fill"></i>
+                </button>
+            </div>
+            <p class="text-gray-500 text-xs mt-2 text-center">所有对话仅本地浏览器保存，敏感隐私内容请勿输入</p>
+        </footer>
+    </div>
+</div>
+
+<script>
+// ===================== 【smanx/free-api 官方最新可用配置】=====================
+const API_BASE = "https://openai.good.hidns.vip/v1";
+const API_KEY = "free-api"; // 接口官方固定公开密钥
+let chatHistory = [];
+const MAX_HISTORY_LENGTH = 12; // 上下文截断，防止超限报错
+
+// ===================== 移动端侧边栏开关 =====================
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.toggle('translate-x-full');
+}
+
+// ===================== 清空全部对话 + 重置上下文记忆 =====================
+function clearAllChat() {
+    document.getElementById('chatBox').innerHTML = "";
+    chatHistory = [];
+    document.getElementById('status').innerText = "✅ 对话已清空";
+}
+
+// ===================== 核心发送消息函数 =====================
+async function sendMessage() {
+    const input = document.getElementById('inputText');
+    const model = document.getElementById('modelSelect').value;
+    const content = input.value.trim();
+    
+    // 空内容拦截
+    if (!content) return;
+    input.value = "";
+    document.getElementById('status').innerText = "🔄 正在思考...";
+
+    // 新增用户消息到界面
+    addMessageUI(content, "user");
+
+    // 判断是否为绘画模式
+    if (model === "image") {
+        await generateImage(content);
+        return;
+    }
+
+    // 对话模型：更新上下文历史 + 长度截断
+    chatHistory.push({ role: "user", content: content });
+    if (chatHistory.length > MAX_HISTORY_LENGTH) {
+        chatHistory = chatHistory.slice(-MAX_HISTORY_LENGTH);
+    }
+
+    // AI回复加载占位框
+    const aiMsgDom = addMessageUI("", "ai");
+    aiMsgDom.classList.add("loading-animate");
+    let fullReply = "";
+
+    try {
+        // 发起接口请求
+        const response = await fetch(`${API_BASE}/chat/completions`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${API_KEY}`
+            },
+            body: JSON.stringify({
+                model: model,
+                messages: chatHistory,
+                stream: true,
+                temperature: 0.7
+            })
+        });
+
+        // 完整SSE流式数据流解析（修复原版解析BUG）
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            // 分割所有返回行，容错空行、脏数据
+            const allLines = chunk.split('\n').filter(line => line.trim() !== '');
+            
+            for (const line of allLines) {
+                // 只处理SSE标准data行
+                if (!line.startsWith('data: ')) continue;
+                const jsonStr = line.replace('data: ', '').trim();
+                // 流结束标记
+                if (jsonStr === '[DONE]') continue;
+
+                try {
+                    const data = JSON.parse(jsonStr);
+                    // 提取增量文本
+                    const deltaText = data.choices?.[0]?.delta?.content || '';
+                    if (deltaText) {
+                        fullReply += deltaText;
+                        aiMsgDom.innerText = fullReply;
+                    }
+                } catch (parseErr) {
+                    // 忽略解析异常，不中断流
+                    continue;
+                }
             }
         }
 
-        document.getElementById('input').addEventListener('keypress',(e)=>{
-            if(e.key === 'Enter') send();
+        // 流结束，移除加载动画，存入上下文
+        aiMsgDom.classList.remove("loading-animate");
+        chatHistory.push({ role: "assistant", content: fullReply });
+        document.getElementById('status').innerText = "✅ 回复完成";
+
+    } catch (error) {
+        console.error("接口请求错误", error);
+        aiMsgDom.classList.remove("loading-animate");
+        aiMsgDom.innerText = "❌ 请求失败：接口繁忙/限流，请稍后重试";
+        document.getElementById('status').innerText = "⚠️ 服务异常";
+    }
+    scrollToBottom();
+}
+
+// ===================== AI文生图生成功能 =====================
+async function generateImage(prompt) {
+    const aiMsgDom = addMessageUI("🎨 正在生成图片，请稍候...", "ai");
+    try {
+        const res = await fetch(`${API_BASE}/images/generations`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${API_KEY}`
+            },
+            body: JSON.stringify({
+                prompt: prompt,
+                n: 1,
+                size: "1024x1024"
+            })
         });
-    </script>
+        const result = await res.json();
+        const imgUrl = result.data?.[0]?.url;
+
+        if (imgUrl) {
+            aiMsgDom.innerHTML = `
+                <p class="mb-2">✅ 图片生成完成</p>
+                <img src="${imgUrl}" class="rounded-lg w-full max-w-md shadow-md" alt="AI生成图片">
+            `;
+        } else {
+            aiMsgDom.innerText = "❌ 绘图失败，当前接口绘图服务暂不可用";
+        }
+    } catch (err) {
+        aiMsgDom.innerText = "❌ 绘图接口请求异常，请切换对话模型使用";
+    }
+    document.getElementById('status').innerText = "✅ 服务就绪";
+    scrollToBottom();
+}
+
+// ===================== 消息界面渲染函数 =====================
+function addMessageUI(text, role) {
+    const chatBox = document.getElementById('chatBox');
+    const msgContainer = document.createElement('div');
+    
+    if (role === "user") {
+        // 用户消息：右对齐
+        msgContainer.className = "flex justify-end";
+        msgContainer.innerHTML = `
+            <div class="bg-userMsgBg rounded-xl p-4 max-w-[85%] md:max-w-[70%] text-white">
+                ${text}
+            </div>
+        `;
+    } else {
+        // AI消息：左对齐
+        msgContainer.className = "flex justify-start";
+        msgContainer.innerHTML = `
+            <div class="bg-aiMsgBg rounded-xl p-4 max-w-[85%] md:max-w-[70%] text-white">
+                ${text}
+            </div>
+        `;
+    }
+    chatBox.appendChild(msgContainer);
+    // 返回消息内容div，用于后续流式填充
+    return msgContainer.querySelector('div');
+}
+
+// ===================== 自动滚动到最新消息 =====================
+function scrollToBottom() {
+    const box = document.getElementById('chatBox');
+    box.scrollTop = box.scrollHeight;
+}
+
+// ===================== 键盘快捷操作：回车发送，Shift+回车换行 =====================
+document.getElementById('inputText').addEventListener('keydown', (e) => {
+    // 单纯回车：发送消息，阻止换行
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+</script>
 </body>
 </html>
