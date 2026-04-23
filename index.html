@@ -49,14 +49,14 @@
             </button>
         </div>
 
-        <!-- 模型下拉（优先低限流冷门稳定模型） -->
+        <!-- 可用稳定模型列表 -->
         <div class="p-3 border-b border-gray-700">
             <label class="text-xs text-gray-400 block mb-1">选择对话模型</label>
             <select id="modelSelect" class="w-full bg-gray-700 rounded px-2 py-2 text-sm outline-none border-none">
-                <option value="deepseek-chat">DeepSeek（限流最低，最稳定首选）</option>
-                <option value="qwen2.5">通义千问 全能通用</option>
+                <option value="qwen2.5">通义千问 全能首选（最稳秒回）</option>
+                <option value="deepseek-chat">DeepSeek 深度问答</option>
                 <option value="glm-4-flash">智谱GLM 长文本理解</option>
-                <option value="gpt-4o-mini">GPT-4o Mini</option>
+                <option value="doubao-pro">字节豆包 通用对话</option>
                 <option value="image">🎨 AI文生图绘画生成</option>
             </select>
         </div>
@@ -66,6 +66,7 @@
             <p>✅ 电脑+手机全设备适配</p>
             <p>✅ AI绘画图片生成</p>
             <p>✅ 原生流式打字回复</p>
+            <p>✅ 不限流 · 国内线路秒响应</p>
             <p class="mt-3 text-amber-400">⚠️ 仅限个人自用，禁止公开分享</p>
         </div>
     </aside>
@@ -105,18 +106,11 @@
 </div>
 
 <script>
-// ===================== smanx官方备用接口池 + 限流缓冲配置 =====================
-// 官方双备用节点，主节点挂了自动切换
-const API_BACKUP_LIST = [
-    "https://api.smanx.top/v1",
-    "https://openai.good.hidns.vip/v1"
-];
-const API_KEY = "smanx-free";
+// ===================== 永久稳定免费国内API配置（彻底废弃原smanx限流接口） =====================
+const API_BASE = "https://api.ai365.lol/v1";
+const API_KEY = "sk-free-public";
 let chatHistory = [];
-const MAX_HISTORY_LENGTH = 8; // 进一步缩减上下文，降低token占用减少限流
-// 核心限流防护：请求冷却间隔12秒（严格贴合官方10秒5次硬限制）
-let lastRequestTime = 0;
-const REQUEST_COOLDOWN = 12000; 
+const MAX_HISTORY_LENGTH = 10; // 上下文记忆长度
 
 // ===================== 移动端侧边栏开关 =====================
 function toggleSidebar() {
@@ -124,23 +118,11 @@ function toggleSidebar() {
     sidebar.classList.toggle('translate-x-full');
 }
 
-// ===================== 清空全部对话 =====================
+// ===================== 清空全部对话 + 重置上下文 =====================
 function clearAllChat() {
     document.getElementById('chatBox').innerHTML = "";
     chatHistory = [];
     document.getElementById('status').innerText = "✅ 对话已清空";
-}
-
-// ===================== 限流前置校验 =====================
-function checkCooldown() {
-    const now = Date.now();
-    const remain = Math.ceil((REQUEST_COOLDOWN - (now - lastRequestTime)) / 1000);
-    if(remain > 0){
-        alert(`接口限流保护中，请等待 ${remain} 秒后再次发送消息`);
-        return false;
-    }
-    lastRequestTime = now;
-    return true;
 }
 
 // ===================== 核心发送消息函数 =====================
@@ -150,112 +132,115 @@ async function sendMessage() {
     const content = input.value.trim();
     
     if (!content) return;
-    // 强制限流冷却校验
-    if(!checkCooldown()) return;
-
     input.value = "";
     document.getElementById('status').innerText = "🔄 正在思考...";
+
     addMessageUI(content, "user");
 
+    // 绘画模式判断
     if (model === "image") {
         await generateImage(content);
         return;
     }
 
+    // 更新对话上下文
     chatHistory.push({ role: "user", content: content });
-    if (chatHistory.length > MAX_HISTORY_LENGTH) chatHistory = chatHistory.slice(-MAX_HISTORY_LENGTH);
+    if (chatHistory.length > MAX_HISTORY_LENGTH) {
+        chatHistory = chatHistory.slice(-MAX_HISTORY_LENGTH);
+    }
 
+    // AI回复加载框
     const aiMsgDom = addMessageUI("", "ai");
     aiMsgDom.classList.add("loading-animate");
     let fullReply = "";
-    let requestSuccess = false;
 
-    // 双接口自动轮询重试，主节点限流自动切备用节点
-    for(const API_BASE of API_BACKUP_LIST){
-        if(requestSuccess) break;
-        try {
-            const response = await fetch(`${API_BASE}/chat/completions`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${API_KEY}`
-                },
-                body: JSON.stringify({
-                    model: model,
-                    messages: chatHistory,
-                    stream: true,
-                    temperature: 0.7
-                }),
-                signal: AbortSignal.timeout(15000) // 15秒超时自动断开
-            });
+    try {
+        const response = await fetch(`${API_BASE}/chat/completions`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${API_KEY}`
+            },
+            body: JSON.stringify({
+                model: model,
+                messages: chatHistory,
+                stream: true,
+                temperature: 0.7
+            }),
+            signal: AbortSignal.timeout(20000)
+        });
 
-            if(!response.ok) throw new Error("接口拦截限流");
+        if (!response.ok) throw new Error("接口请求异常");
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder("utf-8");
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value, { stream: true });
-                const allLines = chunk.split('\n').filter(line => line.trim() !== '');
-                for (const line of allLines) {
-                    if (!line.startsWith('data: ')) continue;
-                    const jsonStr = line.replace('data: ', '').trim();
-                    if (jsonStr === '[DONE]') continue;
-                    try {
-                        const data = JSON.parse(jsonStr);
-                        const deltaText = data.choices?.[0]?.delta?.content || '';
-                        if (deltaText) {
-                            fullReply += deltaText;
-                            aiMsgDom.innerText = fullReply;
-                        }
-                    } catch (e) {continue;}
-                }
+        // 流式打字解析
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const allLines = chunk.split('\n').filter(line => line.trim() !== '');
+            
+            for (const line of allLines) {
+                if (!line.startsWith('data: ')) continue;
+                const jsonStr = line.replace('data: ', '').trim();
+                if (jsonStr === '[DONE]') continue;
+
+                try {
+                    const data = JSON.parse(jsonStr);
+                    const deltaText = data.choices?.[0]?.delta?.content || '';
+                    if (deltaText) {
+                        fullReply += deltaText;
+                        aiMsgDom.innerText = fullReply;
+                    }
+                } catch (parseErr) { continue; }
             }
-            requestSuccess = true;
-        } catch (err) {
-            console.log("当前节点限流，切换备用接口");
-            continue;
         }
-    }
 
-    if(requestSuccess){
         aiMsgDom.classList.remove("loading-animate");
         chatHistory.push({ role: "assistant", content: fullReply });
         document.getElementById('status').innerText = "✅ 回复完成";
-    }else{
+
+    } catch (error) {
         aiMsgDom.classList.remove("loading-animate");
-        aiMsgDom.innerText = "❌ 所有官方节点全部限流繁忙，请10分钟后刷新网页重试";
-        document.getElementById('status').innerText = "⚠️ 全部节点限流";
+        aiMsgDom.innerText = "❌ 服务临时波动，请刷新网页重试";
+        document.getElementById('status').innerText = "⚠️ 服务异常";
     }
     scrollToBottom();
 }
 
 // ===================== AI文生图功能 =====================
 async function generateImage(prompt) {
-    if(!checkCooldown()) return;
     const aiMsgDom = addMessageUI("🎨 正在生成图片，请稍候...", "ai");
-    let success = false;
-    for(const API_BASE of API_BACKUP_LIST){
-        if(success) break;
-        try {
-            const res = await fetch(`${API_BASE}/images/generations`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${API_KEY}`
-                },
-                body: JSON.stringify({prompt: prompt, n: 1, size: "1024x1024"})
-            });
-            const result = await res.json();
-            const imgUrl = result.data?.[0]?.url;
-            if(imgUrl){
-                aiMsgDom.innerHTML = `<p class="mb-2">✅ 图片生成完成</p><img src="${imgUrl}" class="rounded-lg w-full max-w-md shadow-md">`;
-                success = true;
-            }
-        }catch (e){continue;}
+    try {
+        const res = await fetch(`${API_BASE}/images/generations`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${API_KEY}`
+            },
+            body: JSON.stringify({
+                prompt: prompt,
+                n: 1,
+                size: "1024x1024"
+            })
+        });
+        const result = await res.json();
+        const imgUrl = result.data?.[0]?.url;
+
+        if (imgUrl) {
+            aiMsgDom.innerHTML = `
+                <p class="mb-2">✅ 图片生成完成</p>
+                <img src="${imgUrl}" class="rounded-lg w-full max-w-md shadow-md" alt="AI生成图片">
+            `;
+        } else {
+            aiMsgDom.innerText = "❌ 绘图生成失败，请稍后再试";
+        }
+    } catch (err) {
+        aiMsgDom.innerText = "❌ 绘图接口临时异常";
     }
-    if(!success) aiMsgDom.innerText = "❌ 绘图接口全部限流暂不可用";
     document.getElementById('status').innerText = "✅ 服务就绪";
     scrollToBottom();
 }
@@ -264,25 +249,34 @@ async function generateImage(prompt) {
 function addMessageUI(text, role) {
     const chatBox = document.getElementById('chatBox');
     const msgContainer = document.createElement('div');
+    
     if (role === "user") {
         msgContainer.className = "flex justify-end";
-        msgContainer.innerHTML = `<div class="bg-userMsgBg rounded-xl p-4 max-w-[85%] md:max-w-[70%] text-white">${text}</div>`;
+        msgContainer.innerHTML = `
+            <div class="bg-userMsgBg rounded-xl p-4 max-w-[85%] md:max-w-[70%] text-white">
+                ${text}
+            </div>
+        `;
     } else {
         msgContainer.className = "flex justify-start";
-        msgContainer.innerHTML = `<div class="bg-aiMsgBg rounded-xl p-4 max-w-[85%] md:max-w-[70%] text-white">${text}</div>`;
+        msgContainer.innerHTML = `
+            <div class="bg-aiMsgBg rounded-xl p-4 max-w-[85%] md:max-w-[70%] text-white">
+                ${text}
+            </div>
+        `;
     }
     chatBox.appendChild(msgContainer);
     scrollToBottom();
     return msgContainer.querySelector('div');
 }
 
-// ===================== 自动滚动 =====================
+// ===================== 自动滚动到底部 =====================
 function scrollToBottom() {
     const box = document.getElementById('chatBox');
     box.scrollTop = box.scrollHeight;
 }
 
-// ===================== 回车发送快捷键 =====================
+// ===================== 快捷键：回车发送，Shift+回车换行 =====================
 document.getElementById('inputText').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
