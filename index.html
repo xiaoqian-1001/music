@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的私人AI</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif}
+        body{background:#111827;color:#fff;padding:20px;max-width:900px;margin:0 auto}
+        #chat{height:75vh;overflow-y:auto;margin-bottom:20px;padding:10px}
+        .message{margin:10px 0;padding:14px 18px;border-radius:14px;max-width:85%;line-height:1.6}
+        .user{background:#2563eb;margin-left:auto;color:white}
+        .ai{background:#1f2937}
+        .input-area{display:flex;gap:10px;margin-top:10px}
+        input{flex:1;padding:16px;border-radius:12px;border:none;background:#1f2937;color:white;outline:none;font-size:16px}
+        button{padding:0 20px;background:#2563eb;color:white;border:none;border-radius:12px;font-size:16px;cursor:pointer}
+    </style>
+</head>
+<body>
+    <div id="chat"></div>
+    <div class="input-area">
+        <input type="text" id="input" placeholder="输入消息..." autocomplete="off">
+        <button onclick="send()">发送</button>
+    </div>
+
+    <script>
+        const API_URL = "https://openai.good.hidns.vip/v1/chat/completions";
+        const API_KEY = "free-api";
+
+        async function send(){
+            const input = document.getElementById('input');
+            const text = input.value.trim();
+            if(!text) return;
+            input.value = '';
+
+            const chat = document.getElementById('chat');
+            chat.innerHTML += `<div class='message user'>${text}</div>`;
+            chat.scrollTop = chat.scrollHeight;
+
+            const aiMsg = document.createElement('div');
+            aiMsg.className = 'message ai';
+            aiMsg.innerText = '思考中...';
+            chat.appendChild(aiMsg);
+            chat.scrollTop = chat.scrollHeight;
+
+            try{
+                const res = await fetch(API_URL,{
+                    method:'POST',
+                    headers:{
+                        'Content-Type':'application/json',
+                        'Authorization':'Bearer '+API_KEY
+                    },
+                    body:JSON.stringify({
+                        model:"gpt-4o-mini",
+                        messages:[{role:"user",content:text}],
+                        stream:true
+                    })
+                });
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let result = '';
+                aiMsg.innerText = '';
+
+                while(true){
+                    const {done,value} = await reader.read();
+                    if(done) break;
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n').filter(i=>i.trim());
+                    for(let line of lines){
+                        if(!line.startsWith('data: ')) continue;
+                        const jsonStr = line.slice(6);
+                        if(jsonStr === '[DONE]') continue;
+                        try{
+                            const data = JSON.parse(jsonStr);
+                            const content = data.choices[0]?.delta?.content || '';
+                            result += content;
+                            aiMsg.innerText = result;
+                            chat.scrollTop = chat.scrollHeight;
+                        }catch(e){}
+                    }
+                }
+            }catch(err){
+                aiMsg.innerText = "出错了："+err.message;
+            }
+        }
+
+        document.getElementById('input').addEventListener('keypress',(e)=>{
+            if(e.key === 'Enter') send();
+        });
+    </script>
+</body>
+</html>
