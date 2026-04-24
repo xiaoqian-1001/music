@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>小钱音乐网 | 小钱SVIP音源</title>
+    <title>小钱音乐网 | 小杜专用八音盒</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
@@ -328,6 +328,59 @@
             
             return result.sort((a, b) => a.time - b.time);
         }
+
+        // 多备用歌词接口（重点修改这里）
+        async function getLyric(songmid, title, artist) {
+            const cacheKey = `${songmid}-${title}-${artist}`;
+            if (lyricCache.has(cacheKey)) return lyricCache.get(cacheKey);
+
+            const proxies = [
+                'https://proxy.api.030101.xyz/',
+                'https://cors-anywhere.herokuapp.com/',
+                ''
+            ];
+
+            // 备用接口1：oiapi.net（QQ音乐歌词）
+            const api1 = async (p) => {
+                try {
+                    const url = `${p}https://oiapi.net/api/QQMusicLyric?songmid=${songmid}`;
+                    const r = await axios.get(url, { timeout: 8000 });
+                    return r.data?.lyric || '';
+                } catch (e) { return ''; }
+            };
+
+            // 备用接口2：lrclib.net（通用歌词）
+            const api2 = async (p) => {
+                try {
+                    const url = `${p}https://lrclib.net/api/search?q=${encodeURIComponent(title + ' ' + artist)}`;
+                    const r = await axios.get(url, { timeout: 8000 });
+                    return r.data?.[0]?.syncedLyrics || '';
+                } catch (e) { return ''; }
+            };
+
+            // 备用接口3：lyrics.ovh（纯文本兜底）
+            const api3 = async (p) => {
+                try {
+                    const url = `${p}https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`;
+                    const r = await axios.get(url, { timeout: 8000 });
+                    const txt = r.data?.lyrics || '';
+                    // 转成伪时间轴（每3秒一行）
+                    return txt.split('\n').filter(x=>x.trim()).map((t,i)=>`[${String(Math.floor(i*3/60)).padStart(2,'0')}:${String(i*3%60).padStart(2,'0')}.00]${t}`).join('\n');
+                } catch (e) { return ''; }
+            };
+
+            // 轮询代理+接口
+            let raw = '';
+            for (const p of proxies) {
+                raw = await api1(p); if (raw) break;
+                raw = await api2(p); if (raw) break;
+                raw = await api3(p); if (raw) break;
+            }
+
+            const parsed = parseLyric(raw);
+            lyricCache.set(cacheKey, parsed);
+            return parsed;
+        }
         
         async function searchMusicQuery(query, page) {
             const postData = {
@@ -364,26 +417,6 @@
             } catch (error) {
                 console.error('获取播放链接错误:', error);
                 return null;
-            }
-        }
-        
-        async function getLyric(songmid) {
-            if (lyricCache.has(songmid)) return lyricCache.get(songmid);
-            try {
-                const url = `https://api.xunhuisi.store/API/QQMusic/Lyric.php?mid=${songmid}`;
-                const response = await axios.get(PROXY + url, {
-                    headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://y.qq.com' },
-                    timeout: 10000
-                });
-                if (response.data && response.data.code === 200 && response.data.lyric) {
-                    const parsed = parseLyric(response.data.lyric);
-                    lyricCache.set(songmid, parsed);
-                    return parsed;
-                }
-                return [];
-            } catch (error) {
-                console.error('获取歌词错误:', error);
-                return [];
             }
         }
         
@@ -449,7 +482,8 @@
                     const url = await getPlayUrl(song.songmid);
                     if (url) {
                         currentPlayUrl.value = url;
-                        lyrics.value = await getLyric(song.songmid);
+                        // 传title和artist给多接口歌词
+                        lyrics.value = await getLyric(song.songmid, song.title, song.artist);
                         nextTick(() => {
                             if (audioPlayer.value) {
                                 audioPlayer.value.play().then(() => {
